@@ -1,10 +1,9 @@
 import os, io, time, json, random, string
-from flask import Flask, request, render_template_string, Response, send_from_directory
+from flask import Flask, request, render_template_string, Response
 from PIL import Image, ImageDraw, ImageFont
 
 app = Flask(__name__)
 
-# ---- Mock dữ liệu ngày giống file của bạn ----
 DAYS = [
     {"id": "35", "label": "13/08/2025"},
     {"id": "36", "label": "14/08/2025"},
@@ -12,7 +11,6 @@ DAYS = [
     {"id": "38", "label": "16/08/2025"},
 ]
 
-# Cho phép set ngày/phiên "full" qua ENV: FULL_PAIR="dayId,sessionValue" (vd: "37,S1")
 full_pair = os.getenv("FULL_PAIR", "")
 FULL_SESSIONS = set()
 if full_pair:
@@ -21,13 +19,13 @@ if full_pair:
         FULL_SESSIONS.add((d, s))
     except Exception:
         pass
-# Default: (37, "S1") full để test
 FULL_SESSIONS.add(("37", "S1"))
 
-# In-memory captcha: token -> {"code":..., "ts":...}
 CAPTCHA_STORE = {}
+QR_CACHE = {}
 
 def gen_code(n=5):
+    import string, random
     return ''.join(random.choices(string.ascii_uppercase + string.digits, k=n))
 
 def make_png_with_text(text: str, size=(180, 50), bg=(242,242,242), fg=(18,18,18)):
@@ -37,12 +35,18 @@ def make_png_with_text(text: str, size=(180, 50), bg=(242,242,242), fg=(18,18,18
         font = ImageFont.truetype("arial.ttf", 28)
     except:
         font = ImageFont.load_default()
-    d.text((10, 10), text, fill=fg, font=font)
+    try:
+        bbox = d.textbbox((0,0), text, font=font)
+        tw = bbox[2]-bbox[0]; th = bbox[3]-bbox[1]
+    except Exception:
+        tw, th = d.textlength(text, font=font), 28
+    x = max(10, (size[0]-tw)//2)
+    y = max(10, (size[1]-th)//2)
+    d.text((x, y), text, fill=fg, font=font)
     bio = io.BytesIO()
     img.save(bio, format="PNG")
     return bio.getvalue()
 
-# ---- HTML trang /popmart: giữ đúng ID + flow ----
 PAGE_HTML = """<!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8"><title>ĐĂNG KÝ THÔNG TIN POP-MART</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"><meta http-equiv="X-UA-Compatible" content="ie=edge">
@@ -63,8 +67,6 @@ function LoadCaptcha(){
   x.onreadystatechange=function(){if(x.readyState==4 && x.status==200){document.getElementById("dvCaptcha").innerHTML=x.responseText.trim();}}
   x.open("GET","/Ajax.aspx?Action=LoadCaptcha",true);x.send();
 }
-function isNumeric(str){if(typeof str!="string")return false;return !isNaN(str)&&!isNaN(parseFloat(str))}
-function validateEmail(email){var re=/\\S+@\\S+\\.\\S+/;return re.test(email);}
 function LoadPhien(){
   var idNgayBanHang=document.getElementById("slNgayBanHang").value;
   var x=new XMLHttpRequest();
@@ -93,8 +95,8 @@ function DangKyThamDu(){
       var result=x.responseText.trim();
       if(result.indexOf("!!!True|~~|")>=0){
         var arr=result.split("|~~|");
-        var ma=arr[3].trim();
-        var htmlKQ=arr[2].trim();
+        var ma=arr[3].trim();      // match JS gốc: arr[3] là mã
+        var htmlKQ=arr[2].trim();  // arr[2] là HTML confirm
         document.getElementById("dvConXacNhan_Content").innerHTML="<div style='font-weight:bold;color:#329a36;font-size:23px;margin-bottom:5px;text-align:center;margin-top:15px'>ĐĂNG KÝ THÀNH CÔNG</div>"+htmlKQ;
         document.getElementById("txtQRCode").value=ma;
         GenQRImage(idPhien,ma);
@@ -118,7 +120,13 @@ function GenQRImage(idPhien,MaThamDu){
     if(x.readyState==4 && x.status==200){
       try{
         var j=JSON.parse(x.responseText||"{}");
-        if(j.d){document.getElementById("qrdl").href=j.d; SendEmail(idPhien,MaThamDu);}
+        if(j.d){
+          document.getElementById("qrdl").href=j.d;
+          // Hiện khối QR & render ảnh
+          document.getElementById("dvTaoMaQR").style.display="";
+          document.getElementById("qrcode").innerHTML="<img src='"+j.d+"' style='width:150px'/>";
+          SendEmail(idPhien,MaThamDu);
+        }
       }catch(e){}
     }
   }
@@ -130,6 +138,7 @@ function SendEmail(idPhien,MaThamDu){
   x.onreadystatechange=function(){};
   x.send();
 }
+function CloseThongBao(){document.getElementById("dvThongBao").style.display="none";}
 </script>
 </head>
 <body class="body">
@@ -214,14 +223,12 @@ function SendEmail(idPhien,MaThamDu){
 
 @app.route("/popmart")
 def popmart():
-    # Trả HTML với IDs/flow giống bản gốc (đủ để bot parse ngày & tương tác Ajax)
     return render_template_string(PAGE_HTML, days=DAYS)
 
 @app.route("/Ajax.aspx")
 def ajax():
     action = request.args.get("Action", "")
     if action == "LoadCaptcha":
-        # new captcha, tokenized image
         code = gen_code()
         token = gen_code(8)
         CAPTCHA_STORE[token] = {"code": code, "ts": time.time()}
@@ -242,18 +249,16 @@ def ajax():
         id_day = request.args.get("idNgayBanHang", "")
         id_ses = request.args.get("idPhien", "")
         captcha = request.args.get("Captcha", "")
-        # validate captcha (any code generated in 2 minutes)
         now = time.time()
         valid = {v["code"] for v in CAPTCHA_STORE.values() if now - v["ts"] < 120}
         if captcha.upper() not in valid:
             return "Sai Captcha! / Invalid Captcha!"
-        # simulate full session
         if (id_day, id_ses) in FULL_SESSIONS:
             return "Đã hết số lượng đăng ký phiên này! (This session is full!)"
-        # success format giống site: !!!True|~~|<HTML_XAC_NHAN>|~~|<anything?>|~~|<MA_THAM_DU>
         ma = gen_code(10)
         html_xn = "<div>Đăng ký thành công (Mock)</div>"
-        payload = f"!!!True|~~|{html_xn}|~~|OK|~~|{ma}"
+        # IMPORTANT: make arr[2] = HTML, arr[3] = MaThamDu
+        payload = f"!!!True|~~|OK|~~|{html_xn}|~~|{ma}"
         return payload
 
     if action == "SendEmail":
@@ -268,24 +273,27 @@ def gen_qr():
         value = data.get("GiaTri", "") or data.get("NoiDungHienBenDuoi", "")
         if not value:
             value = gen_code(10)
-        # create a simple QR-like png with the value text
-        png = make_png_with_text(value, size=(220, 220))
-        # serve as in-memory file under a pseudo path
-        # để đơn giản, trả 1 URL động /qr/<code>.png
-        token = gen_code(12)
-        QR_CACHE[token] = png
-        url = f"/qr/{token}.png"
+        png = Image.new('RGB', (220, 220), color=(240,240,240))
+        d = ImageDraw.Draw(png)
+        try:
+            font = ImageFont.truetype("arial.ttf", 24)
+        except:
+            font = ImageFont.load_default()
+        txt = f"{value}"
+        w, h = d.textsize(txt, font=font)
+        d.text(((220-w)//2, (220-h)//2), txt, fill=(20,20,20), font=font)
+        bio = io.BytesIO()
+        png.save(bio, format="PNG")
+        QR_CACHE[value] = bio.getvalue()
+        url = f"/qr/{value}.png"
         return json.dumps({"d": url})
     except Exception:
         return json.dumps({"d": ""})
 
-QR_CACHE = {}
-
-@app.route("/qr/<token>.png")
-def qr_png(token):
-    png = QR_CACHE.get(token.replace(".png",""))
+@app.route("/qr/<code>.png")
+def qr_png(code):
+    png = QR_CACHE.get(code.replace(".png",""))
     if not png:
-        # fallback placeholder
         png = make_png_with_text("N/A", size=(220, 220))
     return Response(png, mimetype="image/png")
 
@@ -294,7 +302,6 @@ def captcha_png(token):
     token = token.replace(".png", "")
     item = CAPTCHA_STORE.get(token)
     if not item:
-        # recreate quickly
         code = gen_code()
         CAPTCHA_STORE[token] = {"code": code, "ts": time.time()}
     else:

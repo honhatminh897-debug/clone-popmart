@@ -1,0 +1,107 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>ĐĂNG KÝ THÔNG TIN POP-MART (Mock)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body { background:#f2f2f2; font-family: Arial, Helvetica, sans-serif; }
+    .ConFields { max-width: 880px; margin: 20px auto; }
+    .MySelect, .myTextBox { padding:9px 12px; border:1px solid #da253475; border-radius:8px; width:100%; box-sizing:border-box }
+    .MyButton { background:#f89d17; color:#fff; padding:10px 16px; border-radius:8px; display:inline-block; cursor:pointer; text-decoration:none }
+    .TieuDe { font-weight:700; font-size:22px; text-align:center; margin-bottom:12px }
+    .dvField1 { margin-top:10px }
+    .note { color:#666; font-style:italic }
+  </style>
+  <script>
+    async function LoadPhien() {
+      const idNgayBanHang = document.getElementById('slNgayBanHang').value;
+      const res = await fetch('/Ajax.aspx?Action=LoadPhien&idNgayBanHang=' + encodeURIComponent(idNgayBanHang));
+      const txt = await res.text();
+      const parts = txt.trim().split('||@@||');
+      document.getElementById('slPhien').innerHTML = parts[0] || '';
+      document.getElementById('dvGhiChuNgayBanHang').innerHTML = (parts[1]||'');
+    }
+    async function LoadCaptcha() {
+      const res = await fetch('/Ajax.aspx?Action=LoadCaptcha');
+      const html = await res.text();
+      document.getElementById('dvCaptcha').innerHTML = html;
+    }
+    async function DangKyThamDu() {
+      const idNgayBanHang = document.getElementById('slNgayBanHang').value.trim();
+      const idPhien = document.getElementById('slPhien').value.trim();
+      const HoTen = document.getElementById('txtHoTen').value.trim();
+      const Ngay = document.getElementById('txtNgaySinh_Ngay').value.trim();
+      const Thang = document.getElementById('txtNgaySinh_Thang').value.trim();
+      const Nam = document.getElementById('txtNgaySinh_Nam').value.trim();
+      const SoDienThoai = document.getElementById('txtSoDienThoai').value.trim();
+      const Email = document.getElementById('txtEmail').value.trim();
+      const CCCD = document.getElementById('txtCCCD').value.trim();
+      const Captcha = document.getElementById('txtCaptcha').value.trim();
+      const url = `/Ajax.aspx?Action=DangKyThamDu&idNgayBanHang=${encodeURIComponent(idNgayBanHang)}&idPhien=${encodeURIComponent(idPhien)}&HoTen=${encodeURIComponent(HoTen)}&NgaySinh_Ngay=${encodeURIComponent(Ngay)}&NgaySinh_Thang=${encodeURIComponent(Thang)}&NgaySinh_Nam=${encodeURIComponent(Nam)}&SoDienThoai=${encodeURIComponent(SoDienThoai)}&Email=${encodeURIComponent(Email)}&CCCD=${encodeURIComponent(CCCD)}&Captcha=${encodeURIComponent(Captcha)}`;
+      const res = await fetch(url);
+      const txt = await res.text();
+      const out = document.getElementById('kq');
+      out.innerText = txt;
+      if (txt.toLowerCase().includes('captcha')) { LoadCaptcha(); }
+    }
+    window.onload = function() { LoadCaptcha(); }
+  </script>
+</head>
+<body>
+  <div class="ConFields">
+    <div style="background:#fff; padding:16px; border-radius:10px; box-shadow:0 0 10px rgba(0,0,0,.1)">
+      <div class="TieuDe">ĐĂNG KÝ THAM GIA (Mock)</div>
+      <div class="dvField1">
+        <div>Sales date (Ngày bán hàng)</div>
+        <select id="slNgayBanHang" class="MySelect" onchange="LoadPhien()">
+          {% for d in days %}
+            <option value="{{d.id}}">{{d.label}}</option>
+          {% endfor %}
+        </select>
+        <div id="dvGhiChuNgayBanHang" class="note"></div>
+      </div>
+      <div class="dvField1">
+        <div>Session (Phiên)</div>
+        <select id="slPhien" class="MySelect"></select>
+      </div>
+      <div class="dvField1">
+        <div>Full name (Họ tên)</div>
+        <input id="txtHoTen" class="myTextBox" type="text">
+      </div>
+      <div class="dvField1">
+        <div>Date of birth (Ngày sinh)</div>
+        <div style="display:flex; gap:10px">
+          <input id="txtNgaySinh_Ngay" class="myTextBox" type="number" placeholder="Ngày" style="max-width:120px">
+          <input id="txtNgaySinh_Thang" class="myTextBox" type="number" placeholder="Tháng" style="max-width:120px">
+          <input id="txtNgaySinh_Nam" class="myTextBox" type="number" placeholder="Năm" style="max-width:160px">
+        </div>
+      </div>
+      <div class="dvField1">
+        <div>Phone number (Số điện thoại)</div>
+        <input id="txtSoDienThoai" class="myTextBox" type="text">
+      </div>
+      <div class="dvField1">
+        <div>Email</div>
+        <input id="txtEmail" class="myTextBox" type="text">
+      </div>
+      <div class="dvField1">
+        <div>ID Card/Passport (CCCD/Hộ chiếu)</div>
+        <input id="txtCCCD" class="myTextBox" type="text">
+      </div>
+      <div class="dvField1">
+        <div>Captcha</div>
+        <div style="display:flex; align-items:center; gap:12px">
+          <div id="dvCaptcha"></div>
+          <input id="txtCaptcha" class="myTextBox" type="text" placeholder="Nhập captcha (*)" style="max-width:160px">
+          <a class="MyButton" onclick="LoadCaptcha()">Refresh</a>
+        </div>
+      </div>
+      <div class="dvField1" style="text-align:center">
+        <a class="MyButton" onclick="DangKyThamDu()">Đăng ký</a>
+      </div>
+      <pre id="kq" style="margin-top:12px; white-space: pre-wrap; background:#fafafa; padding:10px; border-radius:8px; border:1px solid #eee"></pre>
+    </div>
+  </div>
+</body>
+</html>

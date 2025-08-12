@@ -1,8 +1,13 @@
-import os, io, time, json, random, string
+import os, io, time, json, random
 from flask import Flask, request, render_template_string, Response
 from PIL import Image, ImageDraw, ImageFont
 
 app = Flask(__name__)
+
+# ===== Configurable bits to mirror prod exactly =====
+QR_URL_TEMPLATE = os.getenv("QR_URL_TEMPLATE", "/files/QR/{code}.png")  # e.g. "/images/AttendCode/{code}.png"
+CODE_ALPHABET = os.getenv("CODE_ALPHABET", "ABCDEFGHJKLMNPQRSTUVWXYZ0123456789")
+CODE_LENGTH = int(os.getenv("CODE_LENGTH", "10"))
 
 DAYS = [
     {"id": "35", "label": "13/08/2025"},
@@ -19,16 +24,18 @@ if full_pair:
         FULL_SESSIONS.add((d, s))
     except Exception:
         pass
-FULL_SESSIONS.add(("37", "S1"))
+
+# Default: mark nothing full unless set by env
+# FULL_SESSIONS.add(("37", "S1"))
 
 CAPTCHA_STORE = {}
 QR_CACHE = {}
 
-def gen_code(n=5):
-    import string, random
-    return ''.join(random.choices(string.ascii_uppercase + string.digits, k=n))
+def gen_code(n=CODE_LENGTH, alphabet=CODE_ALPHABET):
+    return ''.join(random.choice(alphabet) for _ in range(n))
 
 def make_png_with_text(text: str, size=(180, 50), bg=(242,242,242), fg=(18,18,18)):
+    from PIL import Image, ImageDraw, ImageFont
     img = Image.new('RGB', size, color=bg)
     d = ImageDraw.Draw(img)
     try:
@@ -50,6 +57,8 @@ def make_png_with_text(text: str, size=(180, 50), bg=(242,242,242), fg=(18,18,18
 PAGE_HTML = """<!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8"><title>ĐĂNG KÝ THÔNG TIN POP-MART</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"><meta http-equiv="X-UA-Compatible" content="ie=edge">
+<link href="./ĐĂNG KÝ THÔNG TIN POP-MART_files/style.css" rel="stylesheet">
+<script src="./ĐĂNG KÝ THÔNG TIN POP-MART_files/jQuery-2.2.0.min.js"></script>
 <style>
 .body{background:#f2f2f2;font-family:Arial,Helvetica,sans-serif}
 .MyButton{background:#f89d17;color:#fff;padding:10px 16px;border-radius:8px;display:inline-block;cursor:pointer;text-decoration:none}
@@ -59,86 +68,80 @@ PAGE_HTML = """<!DOCTYPE html>
 .dvField1{margin-top:8px}
 </style>
 <script>
-function OpenThongBao(){document.getElementById("dvThongBao").style.display="block";}
-function CloseThongBao(){document.getElementById("dvThongBao").style.display="none";LoadCaptcha();}
+function OpenThongBao(){$("#dvThongBao").fadeIn("normal");}
+function CloseThongBao(){$("#dvThongBao").hide();LoadCaptcha();}
 window.onload=function(){LoadCaptcha();}
 function LoadCaptcha(){
   var x=new XMLHttpRequest();
-  x.onreadystatechange=function(){if(x.readyState==4 && x.status==200){document.getElementById("dvCaptcha").innerHTML=x.responseText.trim();}}
+  x.onreadystatechange=function(){if(x.readyState==4 && x.status==200){$("#dvCaptcha").html(x.responseText.trim());}}
   x.open("GET","/Ajax.aspx?Action=LoadCaptcha",true);x.send();
 }
 function LoadPhien(){
-  var idNgayBanHang=document.getElementById("slNgayBanHang").value;
+  var idNgayBanHang = $("#slNgayBanHang").val();
   var x=new XMLHttpRequest();
   x.onreadystatechange=function(){if(x.readyState==4 && x.status==200){
     var arr=x.responseText.trim().split("||@@||");
-    if(arr.length==2){document.getElementById("slPhien").innerHTML=arr[0].trim();document.getElementById("dvGhiChuNgayBanHang").innerHTML=arr[1].trim();}
-    else{document.getElementById("slPhien").innerHTML="";document.getElementById("dvGhiChuNgayBanHang").innerHTML="";}}
+    if(arr.length==2){$("#slPhien").html(arr[0].trim());$("#dvGhiChuNgayBanHang").html(arr[1].trim());}
+    else{$("#slPhien").html("");$("#dvGhiChuNgayBanHang").html("");}}
   }
   x.open("GET","/Ajax.aspx?Action=LoadPhien&idNgayBanHang="+idNgayBanHang,true);x.send();
 }
+function isNumeric(str){if(typeof str!="string")return false;return !isNaN(str)&&!isNaN(parseFloat(str))}
+function validateEmail(email){var re=/\\S+@\\S+\\.\\S+/;return re.test(email);}
 function DangKyThamDu(){
-  var idNgayBanHang=document.getElementById("slNgayBanHang").value.trim();
-  var idPhien=document.getElementById("slPhien").value.trim();
-  var HoTen=document.getElementById("txtHoTen").value.trim();
-  var Ngay=document.getElementById("txtNgaySinh_Ngay").value.trim();
-  var Thang=document.getElementById("txtNgaySinh_Thang").value.trim();
-  var Nam=document.getElementById("txtNgaySinh_Nam").value.trim();
-  var SoDienThoai=document.getElementById("txtSoDienThoai").value.trim();
-  var Email=document.getElementById("txtEmail").value.trim();
-  var CCCD=document.getElementById("txtCCCD").value.trim();
-  var Captcha=document.getElementById("txtCaptcha").value.trim();
-  var url="/Ajax.aspx?Action=DangKyThamDu&idNgayBanHang="+encodeURIComponent(idNgayBanHang)+"&idPhien="+encodeURIComponent(idPhien)+"&HoTen="+encodeURIComponent(HoTen)+"&NgaySinh_Ngay="+encodeURIComponent(Ngay)+"&NgaySinh_Thang="+encodeURIComponent(Thang)+"&NgaySinh_Nam="+encodeURIComponent(Nam)+"&SoDienThoai="+encodeURIComponent(SoDienThoai)+"&Email="+encodeURIComponent(Email)+"&CCCD="+encodeURIComponent(CCCD)+"&Captcha="+encodeURIComponent(Captcha);
-  var x=new XMLHttpRequest();
-  x.onreadystatechange=function(){
-    if(x.readyState==4 && x.status==200){
-      var result=x.responseText.trim();
-      if(result.indexOf("!!!True|~~|")>=0){
-        var arr=result.split("|~~|");
-        var ma=arr[3].trim();      // match JS gốc: arr[3] là mã
-        var htmlKQ=arr[2].trim();  // arr[2] là HTML confirm
-        document.getElementById("dvConXacNhan_Content").innerHTML="<div style='font-weight:bold;color:#329a36;font-size:23px;margin-bottom:5px;text-align:center;margin-top:15px'>ĐĂNG KÝ THÀNH CÔNG</div>"+htmlKQ;
-        document.getElementById("txtQRCode").value=ma;
-        GenQRImage(idPhien,ma);
-      }else{
-        if(result!=""){
-          if(result.toLowerCase().indexOf("captcha")>=0){LoadCaptcha();}
-          document.getElementById("dvNoiDungThongBao").innerHTML=result;OpenThongBao();
+  var idNgayBanHang = $("#slNgayBanHang").val().trim().replaceAll("|||","");
+  var idPhien = $("#slPhien").val().trim().replaceAll("|||","");
+  var HoTen = $("#txtHoTen").val().trim().replaceAll("|||","");
+  var Ngay = $("#txtNgaySinh_Ngay").val().trim().replaceAll("|||","");
+  var Thang = $("#txtNgaySinh_Thang").val().trim().replaceAll("|||","");
+  var Nam = $("#txtNgaySinh_Nam").val().trim().replaceAll("|||","");
+  var SoDienThoai = $("#txtSoDienThoai").val().trim().replaceAll("|||","");
+  var Email = $("#txtEmail").val().trim().replaceAll("|||","");
+  var CCCD = $("#txtCCCD").val().trim().replaceAll("|||","");
+  var Captcha = $("#txtCaptcha").val().trim();
+  if(idNgayBanHang!="" && idPhien!="" && HoTen!="" && Ngay!="" && Thang!="" && Nam!="" && SoDienThoai!="" && Email!="" && CCCD!="" && Captcha!=""){
+    var x=new XMLHttpRequest();
+    x.onreadystatechange=function(){
+      if(x.readyState==4 && x.status==200){
+        var result=x.responseText.trim();
+        if(result.indexOf("!!!True|~~|")>=0){
+          var arr=result.split("|~~|");
+          var MaThamDu = arr[3].trim();
+          var htmlKQ = "<div style='font-weight:bold;color:#329a36;font-size:23px;margin-bottom:5px;text-align:center;margin-top:15px'>ĐĂNG KÝ THÀNH CÔNG</div>"+arr[2].trim();
+          $("#dvConXacNhan_Content").html(htmlKQ);
+          $("#txtQRCode").val(MaThamDu);
+          GenQRImage(idPhien, MaThamDu);
         }else{
-          document.getElementById("dvNoiDungThongBao").innerHTML="<div>Có vấn đề xảy ra. Bạn vui lòng thử lại!</div><div style='font-style:italic;margin-top:5px;'>Something went wrong. Please try again!</div>";OpenThongBao();
+          if(result!=""){
+            if(result.toLowerCase().indexOf("captcha")>=0){LoadCaptcha();}
+            $("#dvNoiDungThongBao").html(result);OpenThongBao();
+          }else{
+            $("#dvNoiDungThongBao").html("<div>Có vấn đề xảy ra. Bạn vui lòng thử lại!</div><div style='font-style:italic;margin-top: 5px;'>Something went wrong. Please try again!</div>");OpenThongBao();
+          }
         }
       }
     }
+    x.open("GET","/Ajax.aspx?Action=DangKyThamDu&idNgayBanHang="+idNgayBanHang+"&idPhien="+idPhien+"&HoTen="+HoTen+"&NgaySinh_Ngay="+Ngay+"&NgaySinh_Thang="+Thang+"&NgaySinh_Nam="+Nam+"&SoDienThoai="+SoDienThoai+"&Email="+Email+"&CCCD="+CCCD+"&Captcha="+Captcha,true);x.send();
+  }else{
+    $("#dvNoiDungThongBao").html("<div>Bạn chưa nhập đủ thông tin bắt buộc!</div><div style='font-style:italic;margin-top: 5px;'>You have not entered all required information!</div>");OpenThongBao();
   }
-  x.open("GET",url,true);x.send();
 }
 function GenQRImage(idPhien,MaThamDu){
-  var x=new XMLHttpRequest();
-  x.open("POST","/DangKy.aspx/GenQRImage",true);
-  x.setRequestHeader("Content-Type","application/json; charset=utf-8");
-  x.onreadystatechange=function(){
-    if(x.readyState==4 && x.status==200){
-      try{
-        var j=JSON.parse(x.responseText||"{}");
-        if(j.d){
-          document.getElementById("qrdl").href=j.d;
-          // Hiện khối QR & render ảnh
-          document.getElementById("dvTaoMaQR").style.display="";
-          document.getElementById("qrcode").innerHTML="<img src='"+j.d+"' style='width:150px'/>";
-          SendEmail(idPhien,MaThamDu);
-        }
-      }catch(e){}
+  $.ajax({type:"POST",url:"/DangKy.aspx/GenQRImage",contentType:"application/json; charset=utf-8",dataType:"json",
+    data: JSON.stringify({GiaTri:MaThamDu,NoiDungHienBenDuoi:MaThamDu}),
+    success:function(datas){
+      if(datas.d!=""){
+        document.getElementById('qrdl').href = datas.d;
+        // Giữ nguyên hành vi gốc: KHÔNG tự hiện ảnh/khối QR (để bắt bug giống prod)
+        SendEmail(idPhien,MaThamDu);
+      }
     }
-  }
-  x.send(JSON.stringify({GiaTri:MaThamDu,NoiDungHienBenDuoi:MaThamDu}));
+  });
 }
 function SendEmail(idPhien,MaThamDu){
   var x=new XMLHttpRequest();
-  x.open("GET","/Ajax.aspx?Action=SendEmail&idPhien="+encodeURIComponent(idPhien)+"&MaThamDu="+encodeURIComponent(MaThamDu),true);
-  x.onreadystatechange=function(){};
-  x.send();
+  x.open("GET","/Ajax.aspx?Action=SendEmail&idPhien="+idPhien+"&MaThamDu="+MaThamDu,true);x.send();
 }
-function CloseThongBao(){document.getElementById("dvThongBao").style.display="none";}
 </script>
 </head>
 <body class="body">
@@ -193,14 +196,10 @@ function CloseThongBao(){document.getElementById("dvThongBao").style.display="no
         <td style="width:70px">
           <input type="text" id="txtCaptcha" placeholder="Nhập captcha (*)" class="myTextBox" style="width:110px">
         </td>
-        <td style="text-align:left">
-          <a class="MyButton" onclick="LoadCaptcha()">Refresh</a>
-        </td>
+        <td style="text-align:left"><a class="MyButton" onclick="LoadCaptcha()">Refresh</a></td>
       </tr></table>
     </div>
-    <div id="dvDangKyThamDu" style="text-align:center;padding:10px;margin-top:10px">
-      <a id="btDangKyThamGia" onclick="DangKyThamDu()" class="MyButton">Đăng ký</a>
-    </div>
+    <div id="dvDangKyThamDu" style="text-align:center;padding:10px;margin-top:10px"><a id="btDangKyThamGia" onclick="DangKyThamDu()" class="MyButton">Đăng ký</a></div>
     <div id="dvConXacNhan_Content"></div>
 
     <div id="dvTaoMaQR" style="display:none">
@@ -229,10 +228,11 @@ def popmart():
 def ajax():
     action = request.args.get("Action", "")
     if action == "LoadCaptcha":
-        code = gen_code()
+        code = gen_code(5)
         token = gen_code(8)
         CAPTCHA_STORE[token] = {"code": code, "ts": time.time()}
-        img_html = f"<img src='/captcha/{token}.png' style='height:45px;border-radius:10px;margin-left:3px;'>"
+        # return the <img> HTML like prod (string HTML)
+        img_html = f"<img src='/captcha/{token}.png' style='margin-top:-50px;height:45px;border-radius:10px;margin-left:3px;'>"
         return img_html
 
     if action == "LoadPhien":
@@ -255,9 +255,8 @@ def ajax():
             return "Sai Captcha! / Invalid Captcha!"
         if (id_day, id_ses) in FULL_SESSIONS:
             return "Đã hết số lượng đăng ký phiên này! (This session is full!)"
-        ma = gen_code(10)
+        ma = gen_code()
         html_xn = "<div>Đăng ký thành công (Mock)</div>"
-        # IMPORTANT: make arr[2] = HTML, arr[3] = MaThamDu
         payload = f"!!!True|~~|OK|~~|{html_xn}|~~|{ma}"
         return payload
 
@@ -272,25 +271,17 @@ def gen_qr():
         data = request.get_json(force=True, silent=True) or {}
         value = data.get("GiaTri", "") or data.get("NoiDungHienBenDuoi", "")
         if not value:
-            value = gen_code(10)
-        png = Image.new('RGB', (220, 220), color=(240,240,240))
-        d = ImageDraw.Draw(png)
-        try:
-            font = ImageFont.truetype("arial.ttf", 24)
-        except:
-            font = ImageFont.load_default()
-        txt = f"{value}"
-        w, h = d.textsize(txt, font=font)
-        d.text(((220-w)//2, (220-h)//2), txt, fill=(20,20,20), font=font)
-        bio = io.BytesIO()
-        png.save(bio, format="PNG")
-        QR_CACHE[value] = bio.getvalue()
-        url = f"/qr/{value}.png"
+            value = gen_code()
+        # Render "QR" png with the code text (mock). File served at QR_URL_TEMPLATE
+        url = QR_URL_TEMPLATE.format(code=value)
+        QR_CACHE[value] = make_png_with_text(value, size=(220, 220))
         return json.dumps({"d": url})
     except Exception:
         return json.dumps({"d": ""})
 
-@app.route("/qr/<code>.png")
+@app.route("/files/QR/<code>.png")
+@app.route("/images/AttendCode/<code>.png")
+@app.route("/images/qr/<code>.png")
 def qr_png(code):
     png = QR_CACHE.get(code.replace(".png",""))
     if not png:
@@ -302,16 +293,40 @@ def captcha_png(token):
     token = token.replace(".png", "")
     item = CAPTCHA_STORE.get(token)
     if not item:
-        code = gen_code()
+        code = gen_code(5)
         CAPTCHA_STORE[token] = {"code": code, "ts": time.time()}
     else:
         code = item["code"]
     img_bytes = make_png_with_text(code)
     return Response(img_bytes, mimetype="image/png")
 
+@app.route("/ĐĂNG KÝ THÔNG TIN POP-MART_files/jQuery-2.2.0.min.js")
+def jquery_stub():
+    # Minimal jQuery subset for $(), .val(), .html(), .css(), .fadeIn(), .hide(), .show()
+    js = """
+    (function(w){
+      function el(q){return document.querySelector(q);}
+      function J(q){return new _J(q);}
+      function _J(q){this.e = typeof q==='string'?el(q):q;}
+      _J.prototype.val=function(v){if(v===undefined){return this.e && this.e.value || '';} this.e && (this.e.value=v); return this;};
+      _J.prototype.html=function(v){if(v===undefined){return this.e && this.e.innerHTML || '';} this.e && (this.e.innerHTML=v); return this;};
+      _J.prototype.css=function(k,v){if(!this.e)return this; this.e.style[k]=v; return this;};
+      _J.prototype.fadeIn=function(){if(this.e){this.e.style.display='block';} return this;};
+      _J.prototype.hide=function(){if(this.e){this.e.style.display='none';} return this;};
+      _J.prototype.show=function(){if(this.e){this.e.style.display='';} return this;};
+      w.$ = function(q){ if(typeof q==='function'){ q(); return; } return J(q); };
+    })(window);
+    """
+    return Response(js, mimetype="application/javascript")
+
+@app.route("/ĐĂNG KÝ THÔNG TIN POP-MART_files/style.css")
+def style_stub():
+    css = ".myTextBox,.MySelect{border:1px solid #da253475;border-radius:8px;padding:9px 12px;width:100%;box-sizing:border-box} .MyButton{background:#f89d17;color:#fff;padding:10px 16px;border-radius:8px;display:inline-block;cursor:pointer;text-decoration:none}"
+    return Response(css, mimetype="text/css")
+
 @app.route("/")
 def index():
-    return ("<a href='/popmart'>Go to POP-MART mock</a>", 200)
+    return ("<a href='/popmart'>Go to POP-MART mock (configurable)</a>", 200)
 
 @app.route("/healthz")
 def health():

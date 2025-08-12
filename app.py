@@ -127,7 +127,7 @@ function GenQRImage(idPhien,MaThamDu){
     success:function(datas){
       if(datas.d!=""){
         document.getElementById('qrdl').href = datas.d;
-        if (%(show_qr)s){
+        if (__SHOW_QR__){
           document.getElementById("dvTaoMaQR").style.display="";
           document.getElementById("qrcode").innerHTML="<img src='"+datas.d+"' style='width:150px'/>";
         }
@@ -216,11 +216,12 @@ function SendEmail(idPhien,MaThamDu){
 </div>
 </form>
 </body></html>
-""" % {"show_qr": "true" if SHOW_QR else "false"}
+"""
 
 @app.route("/popmart")
 def popmart():
-    return render_template_string(PAGE_HTML, days=DAYS)
+    html = PAGE_HTML.replace("__SHOW_QR__", "true" if SHOW_QR else "false")
+    return render_template_string(html, days=DAYS)
 
 @app.route("/Ajax.aspx")
 def ajax():
@@ -321,7 +322,7 @@ def style_stub():
 
 @app.route("/")
 def index():
-    return ("<a href='/popmart'>Go to POP-MART mock (configurable v2)</a>", 200)
+    return ("<a href='/popmart'>Go to POP-MART mock (configurable v2 - FIX)</a>", 200)
 
 @app.route("/healthz")
 def health():

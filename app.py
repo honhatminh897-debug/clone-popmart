@@ -4,10 +4,11 @@ from PIL import Image, ImageDraw, ImageFont
 
 app = Flask(__name__)
 
-# ===== Configurable bits to mirror prod exactly =====
-QR_URL_TEMPLATE = os.getenv("QR_URL_TEMPLATE", "/files/QR/{code}.png")  # e.g. "/images/AttendCode/{code}.png"
+# ===== Config =====
+QR_URL_TEMPLATE = os.getenv("QR_URL_TEMPLATE", "/files/QR/{code}.png")
 CODE_ALPHABET = os.getenv("CODE_ALPHABET", "ABCDEFGHJKLMNPQRSTUVWXYZ0123456789")
 CODE_LENGTH = int(os.getenv("CODE_LENGTH", "10"))
+SHOW_QR = os.getenv("SHOW_QR", "0").strip() == "1"  # if 1, auto-show QR block & <img>
 
 DAYS = [
     {"id": "35", "label": "13/08/2025"},
@@ -25,9 +26,6 @@ if full_pair:
     except Exception:
         pass
 
-# Default: mark nothing full unless set by env
-# FULL_SESSIONS.add(("37", "S1"))
-
 CAPTCHA_STORE = {}
 QR_CACHE = {}
 
@@ -35,7 +33,6 @@ def gen_code(n=CODE_LENGTH, alphabet=CODE_ALPHABET):
     return ''.join(random.choice(alphabet) for _ in range(n))
 
 def make_png_with_text(text: str, size=(180, 50), bg=(242,242,242), fg=(18,18,18)):
-    from PIL import Image, ImageDraw, ImageFont
     img = Image.new('RGB', size, color=bg)
     d = ImageDraw.Draw(img)
     try:
@@ -86,8 +83,6 @@ function LoadPhien(){
   }
   x.open("GET","/Ajax.aspx?Action=LoadPhien&idNgayBanHang="+idNgayBanHang,true);x.send();
 }
-function isNumeric(str){if(typeof str!="string")return false;return !isNaN(str)&&!isNaN(parseFloat(str))}
-function validateEmail(email){var re=/\\S+@\\S+\\.\\S+/;return re.test(email);}
 function DangKyThamDu(){
   var idNgayBanHang = $("#slNgayBanHang").val().trim().replaceAll("|||","");
   var idPhien = $("#slPhien").val().trim().replaceAll("|||","");
@@ -132,7 +127,10 @@ function GenQRImage(idPhien,MaThamDu){
     success:function(datas){
       if(datas.d!=""){
         document.getElementById('qrdl').href = datas.d;
-        // Giữ nguyên hành vi gốc: KHÔNG tự hiện ảnh/khối QR (để bắt bug giống prod)
+        if (%(show_qr)s){
+          document.getElementById("dvTaoMaQR").style.display="";
+          document.getElementById("qrcode").innerHTML="<img src='"+datas.d+"' style='width:150px'/>";
+        }
         SendEmail(idPhien,MaThamDu);
       }
     }
@@ -218,7 +216,7 @@ function SendEmail(idPhien,MaThamDu){
 </div>
 </form>
 </body></html>
-"""
+""" % {"show_qr": "true" if SHOW_QR else "false"}
 
 @app.route("/popmart")
 def popmart():
@@ -231,7 +229,6 @@ def ajax():
         code = gen_code(5)
         token = gen_code(8)
         CAPTCHA_STORE[token] = {"code": code, "ts": time.time()}
-        # return the <img> HTML like prod (string HTML)
         img_html = f"<img src='/captcha/{token}.png' style='margin-top:-50px;height:45px;border-radius:10px;margin-left:3px;'>"
         return img_html
 
@@ -272,7 +269,6 @@ def gen_qr():
         value = data.get("GiaTri", "") or data.get("NoiDungHienBenDuoi", "")
         if not value:
             value = gen_code()
-        # Render "QR" png with the code text (mock). File served at QR_URL_TEMPLATE
         url = QR_URL_TEMPLATE.format(code=value)
         QR_CACHE[value] = make_png_with_text(value, size=(220, 220))
         return json.dumps({"d": url})
@@ -302,7 +298,6 @@ def captcha_png(token):
 
 @app.route("/ĐĂNG KÝ THÔNG TIN POP-MART_files/jQuery-2.2.0.min.js")
 def jquery_stub():
-    # Minimal jQuery subset for $(), .val(), .html(), .css(), .fadeIn(), .hide(), .show()
     js = """
     (function(w){
       function el(q){return document.querySelector(q);}
@@ -326,7 +321,7 @@ def style_stub():
 
 @app.route("/")
 def index():
-    return ("<a href='/popmart'>Go to POP-MART mock (configurable)</a>", 200)
+    return ("<a href='/popmart'>Go to POP-MART mock (configurable v2)</a>", 200)
 
 @app.route("/healthz")
 def health():
